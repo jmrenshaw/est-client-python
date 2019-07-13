@@ -14,6 +14,13 @@ import asn1crypto.core
 import est.errors
 import est.request
 
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes
+
 class Client(object):
     """API client.
 
@@ -139,11 +146,11 @@ class Client(object):
 
     def create_csr(self, common_name, country=None, state=None, city=None,
                    organization=None, organizational_unit=None,
-                   email_address=None, subject_alt_name=None):
+                   email_address=None, subject_alt_name=None, algorithm='RSA', key_size=2048, curve_name=None):
         """
         Args:
             common_name (str).
-
+            
             country (str).
 
             state (str).
@@ -158,40 +165,89 @@ class Client(object):
 
             subject_alt_name (str).
 
+            algorithm (str).
+            
+            key_size (int).
+            
+            curve_name (str).
+
         Returns:
             (str, str).  Tuple containing private key and certificate
             signing request (PEM).
         """
-        key = OpenSSL.crypto.PKey()
-        key.generate_key(OpenSSL.crypto.TYPE_RSA, 2048)
+        if algorithm == 'RSA':
+            key = OpenSSL.crypto.PKey()
+            key.generate_key(OpenSSL.crypto.TYPE_RSA, key_size)
 
-        req = OpenSSL.crypto.X509Req()
-        req.get_subject().CN = common_name
-        if country:
-            req.get_subject().C = country
-        if state:
-            req.get_subject().ST = state
-        if city:
-            req.get_subject().L = city
-        if organization:
-            req.get_subject().O = organization
-        if organizational_unit:
-            req.get_subject().OU = organizational_unit
-        if email_address:
-            req.get_subject().emailAddress = email_address
-        if subject_alt_name:
-            altName = OpenSSL.crypto.X509Extension('subjectAltName', False, subject_alt_name)
-            req.add_extensions([altName])
-
-        req.set_pubkey(key)
-        req.sign(key, 'sha256')
-
-        private_key = OpenSSL.crypto.dump_privatekey(
-            OpenSSL.crypto.FILETYPE_PEM, key)
-
-        csr = OpenSSL.crypto.dump_certificate_request(
-                   OpenSSL.crypto.FILETYPE_PEM, req)
-
+            req = OpenSSL.crypto.X509Req()
+            req.get_subject().CN = common_name
+            if country:
+                req.get_subject().C = country
+            if state:
+                req.get_subject().ST = state
+            if city:
+                req.get_subject().L = city
+            if organization:
+                req.get_subject().O = organization
+            if organizational_unit:
+                req.get_subject().OU = organizational_unit
+            if email_address:
+                req.get_subject().emailAddress = email_address
+            if subject_alt_name:
+                altName = OpenSSL.crypto.X509Extension('subjectAltName', False, subject_alt_name)
+                req.add_extensions([altName])
+    
+            req.set_pubkey(key)
+            req.sign(key, 'sha256')
+    
+            private_key = OpenSSL.crypto.dump_privatekey(
+                OpenSSL.crypto.FILETYPE_PEM, key)
+    
+            csr = OpenSSL.crypto.dump_certificate_request(
+                       OpenSSL.crypto.FILETYPE_PEM, req)
+            
+        elif algorithm == 'EC':
+            # Generate Elliptic Curve object
+            ec_curve = ec.EllipticCurve
+            ec_curve.name = curve_name
+            
+            ec_key = ec.generate_private_key(ec_curve, default_backend())
+            
+            # Serialize private key into PEM format to be returned.
+            private_key = ec_key.private_bytes(encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+            
+            # Create list of x509 Name Attribute objects making up the subject name. 
+            subjectName = []
+            if country:
+                subjectName.append(x509.NameAttribute(NameOID.COUNTRY_NAME, unicode(country)))
+            if state:
+                subjectName.append(x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, unicode(state)))
+            if city:
+                subjectName.append(x509.NameAttribute(NameOID.LOCALITY_NAME, unicode(city)))
+            if organization:
+                subjectName.append(x509.NameAttribute(NameOID.ORGANIZATION_NAME, unicode(organization)))
+            if organizational_unit:
+                subjectName.append(x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, unicode(organizational_unit)))
+            if email_address:
+                subjectName.append(x509.NameAttribute(NameOID.EMAIL_ADDRESS, unicode(email_address)))
+            
+            # Create subject alternative names.
+            subjectAlternativeName = []
+            if subject_alt_name:
+                subjectAlternativeName.append(x509.DNSName(unicode(subject_alt_name)))        
+            
+            x509_csr = x509.CertificateSigningRequestBuilder().subject_name(
+                x509.Name(subjectName)).add_extension(
+                x509.SubjectAlternativeName(subjectAlternativeName),critical=False
+                ).sign(ec_key, hashes.SHA256(), default_backend())
+             
+            csr = x509_csr.public_bytes(encoding=serialization.Encoding.PEM)
+        else:
+            raise est.errors.Error('Invalid algorithm, RSA or EC are supported')
+        
         return private_key, csr
 
     def pkcs7_to_pem(self, pkcs7):
