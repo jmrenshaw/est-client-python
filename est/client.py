@@ -219,8 +219,11 @@ class Client(object):
                 encryption_algorithm=serialization.NoEncryption()
             )
             
-            # Create list of x509 Name Attribute objects making up the subject name. 
+            # Create the subject common name.
             subjectName = []
+            subjectName.append(x509.NameAttribute(NameOID.COMMON_NAME, unicode(common_name)))           
+            
+            # Create list of x509 Name Attribute objects making up the subject name. 
             if country:
                 subjectName.append(x509.NameAttribute(NameOID.COUNTRY_NAME, unicode(country)))
             if state:
